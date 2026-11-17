@@ -1,0 +1,79 @@
+# 用法：把本文件放到你自己 fork 的仓库里，路径 .github/workflows/build-win.yml
+# 作用：在 GitHub 的 Windows 机器上编译 zyfun，产出两样东西：
+#   1) zyfun-win-3.4.8-rc2-x64-setup.exe   安装包，双击安装后运行
+#   2) zyfun-win-x64-portable.zip          绿色版，解压后运行 zyfun.exe
+# 触发方式：Actions 页面 -> Build Windows -> Run workflow
+
+name: Build Windows
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+
+      # pnpm 版本不写死，由 package.json 的 packageManager 字段决定（pnpm@11.8.0）
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v5
+
+      # Node 版本由 .node-version（24.11.1）决定，.npmrc 里有 engine-strict，版本不对会直接报错
+      - name: 安装 Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install
+
+      # 构建脚本用 dotenv 读取 .env，缺文件会直接失败
+      - name: 生成 .env
+        run: Copy-Item .env.example .env -Force
+
+      # --publish never 必须加：electron-builder.yml 里的 publish 还指向上游 Hiram-Wong/zyfun
+      - name: 编译并打 Windows x64 安装包
+        run: pnpm build:win:x64 -- --publish never
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+
+      # 额外产出一份免安装目录 dist\win-unpacked（里面就是能直接双击的 zyfun.exe）
+      - name: 打包免安装目录
+        run: pnpm exec electron-builder --win --x64 --dir --publish never
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+
+      - name: 绿色版压成 zip
+        run: Compress-Archive -Path dist\win-unpacked\* -DestinationPath dist\zyfun-win-x64-portable.zip -Force
+
+      - name: 列出产物
+        run: Get-ChildItem dist -File | Select-Object Name, @{ n = 'MB'; e = { [math]::Round($_.Length / 1MB, 1) } } | Format-Table -AutoSize
+
+      # 跑完到本次运行的页面底部 Artifacts 区块下载（GitHub 会自动再包一层 zip）
+      - name: 上传产物
+        uses: actions/upload-artifact@v7
+        with:
+          name: zyfun-win-x64
+          path: |
+            dist/*.exe
+            dist/*.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      # 可选：想要一个长期有效的下载链接（Releases 页面），把下面这段取消注释，
+      # 并且把本文件的 on: 改成同时响应 tag（例如 push: tags: ['v*']）
+      # - name: 发布到 Release
+      #   if: startsWith(github.ref, 'refs/tags/')
+      #   uses: softprops/action-gh-release@v2
+      #   with:
+      #     files: |
+      #       dist/*.exe
+      #       dist/zyfun-win-x64-portable.zip
