@@ -3,6 +3,10 @@
 #   1) zyfun-win-3.4.8-rc2-x64-setup.exe   安装包，双击安装后运行
 #   2) zyfun-win-x64-portable.zip          绿色版，解压后运行 zyfun.exe
 # 触发方式：Actions 页面 -> Build Windows -> Run workflow
+#
+# 关键点：编译和打包分成两步，直接调用 electron-builder 并显式 --publish never。
+# 因为 electron-builder.yml 里的 publish 还指向上游 Hiram-Wong/zyfun，
+# 一旦参数没传到位，electron-builder 会在打包成功后再去发布，然后报 GH_TOKEN is not set 失败。
 
 name: Build Windows
 
@@ -39,9 +43,16 @@ jobs:
       - name: 生成 .env
         run: Copy-Item .env.example .env -Force
 
-      # --publish never 必须加：electron-builder.yml 里的 publish 还指向上游 Hiram-Wong/zyfun
-      - name: 编译并打 Windows x64 安装包
-        run: pnpm build:win:x64 -- --publish never
+      # 这一行等价于仓库里的 dotenv npm run build（即 typecheck + electron-vite build）
+      # 不要写成 pnpm build，那样不会加载 .env
+      - name: 编译主进程与渲染进程
+        run: pnpm exec dotenv npm run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+
+      # 直接调用 electron-builder，--publish never 才能真正生效
+      - name: 打 Windows x64 安装包
+        run: pnpm exec electron-builder --win --x64 --publish never
         env:
           NODE_OPTIONS: --max-old-space-size=8192
 
